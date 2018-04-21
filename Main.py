@@ -215,4 +215,4 @@ def sub_process(req):
             raise  # Not error we are looking for
         pass  # Handle error here.
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0')
