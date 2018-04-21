@@ -131,9 +131,9 @@ def sub_process(req):
         log_collection = db.log
         with TorRequest(proxy_port=9050, ctrl_port=9051, password=None) as tr:
             for profile_data in db.profile.find({}):
-                print 'd'+str(profile_data)
 
-            for user_data in db.user.find({}):
+
+             for user_data in db.user.find({}):
                print str(user_data)
                print str(profile_data)
                if True:
