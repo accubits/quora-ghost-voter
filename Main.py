@@ -1,5 +1,7 @@
 import time, datetime
 import errno
+import json
+
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait  # available since 2.4.0
@@ -14,9 +16,9 @@ from selenium import webdriver
 from flask import Flask, request, jsonify
 
 global control
+tor=False
 client = MongoClient('mongodb://0.0.0.0:27017/')
 db = client.quora
-log_collection = db.log
 
 app = Flask(__name__)
 
@@ -29,8 +31,9 @@ def after_request(response):
     return response
 
 
-def log(msg):
+def log(msg,db):
     """Log `msg` to MongoDB log"""
+    log_collection = db.log
     entry = {}
     entry['timestamp'] = datetime.datetime.utcnow()
     entry['msg'] = msg
@@ -41,7 +44,7 @@ def log(msg):
 def addUser():
     if request.method == 'POST':
         req = request.form.to_dict(flat=True)
-        log('User added ' + str(req))
+        log('Message: User added ' + str(req),db)
 
         print req['email']
         db.user.update(
@@ -60,23 +63,28 @@ def addUser():
         return resp
 @app.route("/getLogs", methods=['POST', 'GET'])
 def getLogs():
-    if request.method == 'POST':
+    if request.method == 'GET':
         user_data = db.log.find({}).sort('_id', -1)
-        str_data = str(list(user_data)).encode('ascii')
+        serial_data=[]
+        for data in user_data:
+            serial_data.append(data['msg'])
+            serial_data.append(str(data['timestamp']))
+
+        print type(serial_data)
         data = {
             'success': True,
             'status_code': '200',
             'message': 'Log List ',
-            'result': str_data.replace("u'", "'")
+            'result': serial_data
         }
-        resp = jsonify(data)
-        resp.status_code = 200
+        resp=json.dumps(data)
+
         return resp
 @app.route("/addProfileLink", methods=['POST', 'GET'])
 def addProfile():
     if request.method == 'POST':
         req = request.form.to_dict(flat=True)
-        log('Profile link added ' + str(req['profile_link']))
+        log('Message: Profile link added ' + str(req['profile_link']),db)
         db.profile.update(
             {'profile_link': req['profile_link']}, {'profile_link': req['profile_link']}
             , upsert=True)
@@ -112,73 +120,109 @@ def get_reloaded_driver(tr):
         '--proxy=127.0.0.1:9050',  # You can change these parameters to your liking.
         '--proxy-type=socks5',  # Use socks4/socks5 based on your usage.
     ]
-    driver = webdriver.PhantomJS(service_args=service_args)
+
+    if tor :
+     driver = webdriver.PhantomJS(service_args=service_args)
+    else:
+     driver=webdriver.PhantomJS()
+
     return driver
+
 def sub_process(req):
     try:
         client = MongoClient('mongodb://0.0.0.0:27017/')
         db = client.quora
+        log("Message: BOT started",db)
         with TorRequest(proxy_port=9050, ctrl_port=9051, password=None) as tr:
             for profile_data in db.profile.find({}):
                 for user_data in db.user.find({}):
                     print str(user_data)
                     print str(profile_data)
+                    log("Message: Profile selected :"+str(profile_data['profile_link']), db)
+                    log("Message: User selected :"+str(user_data['email']), db)
+
                     if True:
                         driver = get_reloaded_driver(tr)
                         driver.get('http://checkip.amazonaws.com/')
                         ip_data = driver.find_elements_by_xpath('/html/body/pre')[0].text
                         print ip_data
+                        log("Message: Ip assigned to user "+str(user_data['email'])+" as "+ip_data, db)
                         driver.get('https://quora.com/')
                         try:
                             element = WebDriverWait(driver, 30).until(
                                 EC.presence_of_element_located((By.CLASS_NAME, "header_login_text_box")))
+                            log("Message: Quora  loaded sucessfully", db)
+
                         except TimeoutException as ex:
-                            log("Fail********Qurora didnt load User ip" + ip_data + " user details:" + user_data[
-                                'email'] + 'upvote profile:' +
-                                profile_data['profile_link'])
+                            driver.save_screenshot('screenshot.png')
+                            log("Fail: Quora loading failed ", db)
+                            log("FailSkip: Skipping actions", db)
+                            print "time out"
                             continue
                         emailField = driver.find_elements_by_class_name('header_login_text_box')[0]
-                        print emailField
                         emailField.click()
                         emailField.send_keys(user_data['email'])  # print (driver.page_source.encode('utf-8'))
                         passwordField = driver.find_elements_by_class_name('header_login_text_box')[1]
-                        print passwordField
-                        print passwordField.click()
+                        passwordField.click()
                         passwordField.send_keys(user_data['password'])  # print (driver.page_source.encode('utf-8'))
                         loginBtn = driver.find_elements_by_class_name('submit_button')[3]
-                        print loginBtn
                         loginBtn.click()
+                        log("MessageInitialized: Quora login for user " + user_data['email'] + " Initialized ", db)
+
                         try:
-                            element = WebDriverWait(driver, 15).until(
+                            element = WebDriverWait(driver, 100).until(
                                 EC.presence_of_element_located((By.CLASS_NAME, "PagedListFoo")))
+                            log("Message: Quora login "+user_data['email']+" successful ", db)
+
                         except TimeoutException as ex:
-                            print "timeout"
-                            log("FAIL:*****login" + "User ip" + ip_data + " user details:" + user_data[
-                                'email'] + 'upvote profile:' +
-                                profile_data['profile_link'])
+                            driver.save_screenshot('screenshot.png')
+                            log("Fail: Quora login failed ", db)
+                            log("FailSkip: Skipping actions", db)
+                            print "time out"
                             continue
-                        print "test"
+                        log("MessageInitialized: Quora Profile loading initialized " + profile_data['profile_link'] + " successful ", db)
                         try:
                             driver.get(profile_data['profile_link'])
                             try:
-                                element = WebDriverWait(driver, 30).until(
+                                element = WebDriverWait(driver, 100).until(
                                     EC.presence_of_element_located((By.CLASS_NAME, "layout_3col_center")))
-                                log("User ip" + ip_data + " user details:" + user_data['email'] + 'upvote profile:' +
-                                    profile_data['profile_link'])
+                                log("Message: Quora Profile loaded " + profile_data['profile_link'] + " successful ", db)
+
                             except TimeoutException as ex:
-                                log("FAIL:*****loading profile" + "User ip" + ip_data + " user details:" + user_data[
-                                    'email'] + 'upvote profile:' +
-                                    profile_data['profile_link'])
+                                driver.save_screenshot('screenshot.png')
+                                log("Fail: Quora Profile loading failed ", db)
+                                log("FailSkip: Skipping actions", db)
                                 print "time out"
                                 continue
-                            for i in xrange(0, len(driver.find_elements_by_class_name('Upvote'))):
-                                upvote = driver.find_elements_by_class_name('Upvote')[i]
+
+                            log("MessageInitialized: Quora Up voting initialized " + profile_data[
+                                'profile_link'] + " successful ", db)
+
+                            try:
+                                element = WebDriverWait(driver, 100).until(
+                                    EC.presence_of_element_located((By.CLASS_NAME, "icon_action_bar-button")))
+                                log("Message: Quora Upvoting initializing completed  for" + profile_data['profile_link'] + "  ", db)
+
+                            except TimeoutException as ex:
+                                driver.save_screenshot('screenshot.png')
+                                log("Fail: Quora Upvoting initializing failed ", db)
+                                log("FailSkip: Skipping actions", db)
+                                print "time out"
+                                continue
+
+                            print driver.find_elements_by_css_selector(".icon_action_bar-button.blue_icon")[0].get_attribute('innerHTML')
+                            print len(driver.find_elements_by_css_selector(".icon_action_bar-button.blue_icon"))
+                            for i in xrange(0, len(driver.find_elements_by_css_selector(".icon_action_bar-button.blue_icon"))):
+                                upvote = driver.find_elements_by_css_selector(".icon_action_bar-button.blue_icon")[i]
+                                log("Message: Upvote post "+str(i)+"  by user " + user_data['email'] + " for profile "+profile_data['profile_link']+" successful ", db)
+                                print upvote
                                 if upvote.get_attribute('class').find('pressed') == -1:
                                     upvote.click()
                                     print "clicked"
                                 else:
                                     print "not clicked"
                         finally:
+                            log("Message: Completed actions for " + user_data['email'] + " successful ", db)
                             driver.quit()
     except SocketError as e:
         print "new error"
